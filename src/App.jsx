@@ -12,6 +12,8 @@ const STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
 const full = new Intl.NumberFormat('en');
 const usd = (n) => `$${full.format(Math.round(n))}`;
+const duration = (s) =>
+  s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : s < 129600 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} d`;
 
 const METRICS = {
   pop: {
@@ -127,6 +129,8 @@ export default function App() {
   const [history, setHistory] = useState(null); // Zillow rent by year
   const [yearIdx, setYearIdx] = useState(null); // null = latest
   const [playing, setPlaying] = useState(false);
+  const [status, setStatus] = useState(null); // backend /api/status, polled
+  const [syncedAt, setSyncedAt] = useState(null); // when this page last received city data
 
   const container = useRef(null);
   const mapRef = useRef(null);
@@ -156,8 +160,73 @@ export default function App() {
         }));
         awakeExprRef.current = refreshAwake(list, tz);
         setData({ cities: list, meta, tzNames: tz, countries });
+        setSyncedAt(Date.now());
       })
       .catch((e) => setError(`Couldn't load city data from ${API} (${e.message}). Is the backend running?`));
+  }, []);
+
+  // Poll the backend's status every 30 s. When it holds a newer city dataset than the one on
+  // screen (or its copy has passed its refresh interval), re-fetch and update cities in place.
+  const dataRef = useRef(null);
+  dataRef.current = data;
+  const timeLapseRef = useRef(false);
+  useEffect(() => {
+    if (!cities) return;
+    let busy = false;
+    const check = async () => {
+      let st;
+      try {
+        st = await getJSON('/api/status');
+      } catch {
+        return;
+      }
+      setStatus({ ...st, receivedAt: Date.now() });
+      const ds = st.sources.find((s) => s.id === 'dataset');
+      const have = dataRef.current.meta.fetchedAt;
+      const expired = ds.ageSeconds == null || ds.ageSeconds >= ds.refreshSeconds;
+      const newer = ds.fetchedAt != null && ds.fetchedAt > have + 5;
+      if (busy || (!expired && !newer)) return;
+      busy = true;
+      try {
+        // `t` names the version being asked for, so the answer is cacheable but never stale.
+        const t = expired ? `r${Math.floor(st.now / ds.refreshSeconds)}` : ds.fetchedAt;
+        const fresh = await getJSON(`/api/cities?v=2&t=${t}`);
+        if (fresh.meta.fetchedAt <= have) return;
+        const byGid = new Map(fresh.rows.map((r) => [r[0], r]));
+        for (const c of cities) {
+          const r = byGid.get(c.gid);
+          if (!r) continue;
+          c.pop = r[5];
+          c.rentLatest = r[6];
+          c.rentRealLatest = r[7] === 1;
+          c.ofk = r[8];
+          c.of = Math.round((c.pop * c.ofk) / 1000);
+          c.cls = sizeClass(c.pop);
+          c.tier = tierOf(c.pop);
+          if (!timeLapseRef.current) {
+            c.rent = c.rentLatest;
+            c.rentReal = c.rentRealLatest;
+          }
+        }
+        awakeExprRef.current = refreshAwake(cities, dataRef.current.tzNames);
+        mapRef.current?.getSource('cities')?.setData(toGeoJSON(cities));
+        setData((d) => ({ ...d, meta: fresh.meta, countries: fresh.countries }));
+        setSyncedAt(Date.now());
+        setClock((n) => n + 1);
+      } catch { /* try again on the next poll */ } finally {
+        busy = false;
+      }
+    };
+    check();
+    const timer = setInterval(check, 30000);
+    return () => clearInterval(timer);
+  }, [cities]);
+
+  // Re-render once a second-ish so "x min ago" labels stay honest.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setTick((n) => n + 1), 10000);
+    return () => clearInterval(timer);
   }, []);
 
   // Keep "awake right now" current.
@@ -279,6 +348,7 @@ export default function App() {
   const lastYearIdx = history ? history.years.length - 1 : null;
   const timeLapse = history != null && yearIdx != null && yearIdx !== lastYearIdx;
   const effFilters = useMemo(() => (timeLapse ? { ...filters, realRent: true } : filters), [filters, timeLapse]);
+  timeLapseRef.current = timeLapse;
 
   useEffect(() => {
     if (metric === 'rent' && !history) getJSON('/api/rent/history').then(setHistory).catch(() => {});
@@ -541,6 +611,28 @@ export default function App() {
           <input type="checkbox" checked={effFilters.realRent} disabled={timeLapse} onChange={(e) => setF({ realRent: e.target.checked })} />
           Only cities with measured rent
         </label>
+
+        <h2>Data freshness</h2>
+        {status ? (
+          <ul className="fresh">
+            {status.sources.map((s) => {
+              const age = s.ageSeconds == null ? null : s.ageSeconds + (Date.now() - status.receivedAt) / 1000;
+              return (
+                <li key={s.id}>
+                  <span>{s.label}<small>{s.upstream}</small></span>
+                  <em>
+                    {age == null ? 'not requested yet' : `pulled ${duration(age)} ago`}
+                    <small>every {duration(s.refreshSeconds)}</small>
+                  </em>
+                </li>
+              );
+            })}
+          </ul>
+        ) : <p className="note">Checking the backend…</p>}
+        <p className="note">
+          This page checks the backend every 30 s{syncedAt ? ` and last received city data ${duration((Date.now() - syncedAt) / 1000)} ago` : ''}.
+          Live layers only fetch while switched on.
+        </p>
 
         <button className="spin" onClick={() => setSpin((s) => !s)}>{spin ? '❚❚ Pause rotation' : '▶ Auto-rotate'}</button>
         <p className="note">

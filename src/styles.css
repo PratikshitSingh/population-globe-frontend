@@ -166,3 +166,9 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; white-spac
   .panel.left { width: calc(100% - 32px); max-height: 46%; top: auto; bottom: 16px; }
   .maplibregl-ctrl-bottom-right { right: 0; bottom: 48%; }
 }
+
+.fresh { list-style: none; margin: 0; padding: 0; font-size: 12px; }
+.fresh li { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-top: 1px solid var(--line); }
+.fresh li:first-child { border-top: 0; }
+.fresh em { text-align: right; color: var(--text); }
+.fresh small { display: block; color: var(--muted); font-size: 10.5px; }

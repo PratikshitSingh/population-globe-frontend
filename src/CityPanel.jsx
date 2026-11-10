@@ -26,24 +26,31 @@ const aqiText = (v) => (v <= 50 ? 'good' : v <= 100 ? 'moderate' : v <= 150 ? 'u
 
 // Live lookups are cached for the session so compare mode and re-selection are instant.
 const cache = new Map();
-function useRemote(key, path) {
+function useRemote(key, path, refreshMs) {
   const [, bump] = useState(0);
   useEffect(() => {
-    if (!key || cache.has(key)) return;
+    if (!key) return;
     let alive = true;
-    cache.set(key, undefined);
-    getJSON(path)
-      .then((d) => cache.set(key, d))
-      .catch(() => cache.set(key, null))
-      .finally(() => alive && bump((n) => n + 1));
+    const load = (silent) => {
+      if (!silent) cache.set(key, undefined);
+      getJSON(path)
+        .then((d) => cache.set(key, d))
+        .catch(() => silent || cache.set(key, null)) // a failed refresh keeps the last good value
+        .finally(() => alive && bump((n) => n + 1));
+    };
+    if (!cache.has(key)) load(false);
+    // While the panel stays open, re-fetch so weather, air quality and counts keep moving.
+    const timer = refreshMs ? setInterval(() => load(true), refreshMs) : null;
     return () => {
       alive = false;
+      clearInterval(timer);
       if (cache.get(key) === undefined) cache.delete(key); // let a later mount retry
     };
-  }, [key, path]);
+  }, [key, path, refreshMs]);
   return key ? cache.get(key) : null; // undefined = loading, null = failed
 }
-const useProfile = (city) => useRemote(city && `profile:${city.gid}`, city && `/api/cities/${city.gid}/profile`);
+const PROFILE_REFRESH_MS = 5 * 60 * 1000;
+const useProfile = (city) => useRemote(city && `profile:${city.gid}`, city && `/api/cities/${city.gid}/profile`, PROFILE_REFRESH_MS);
 
 function Row({ label, badge, kind = 'est', children }) {
   if (children == null || children === false) return null;
