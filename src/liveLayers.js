@@ -3,18 +3,19 @@
 import maplibregl from 'maplibre-gl';
 import { degreesLat, degreesLong, eciToGeodetic, gstime, propagate, twoline2satrec } from 'satellite.js';
 import { getJSON } from './api.js';
+import { config } from './config.js';
 import { nightPolygon } from './astro.js';
 
 export const LIVE_LAYERS = [
-  { id: 'daynight', label: 'Day / night', group: 'Earth right now', on: true },
-  { id: 'earthquakes', label: 'Earthquakes (24 h)', group: 'Earth right now', on: true },
-  { id: 'events', label: 'Wildfires, storms, volcanoes', group: 'Earth right now', on: true },
-  { id: 'aurora', label: 'Aurora forecast', group: 'Earth right now', on: false },
-  { id: 'aircraft', label: 'Aircraft', group: 'Things moving', on: false },
-  { id: 'satellites', label: 'ISS + Starlink', group: 'Things moving', on: false },
-  { id: 'pulse', label: 'Births & deaths', group: 'Human activity', on: true },
-  { id: 'wikiedits', label: 'Wikipedia edits, live', group: 'Human activity', on: false },
-  { id: 'cables', label: 'Submarine cables', group: 'Internet', on: false },
+  { id: 'daynight', label: 'Day / night', group: 'Earth right now' },
+  { id: 'earthquakes', label: 'Earthquakes (24 h)', group: 'Earth right now' },
+  { id: 'events', label: 'Wildfires, storms, volcanoes', group: 'Earth right now' },
+  { id: 'aurora', label: 'Aurora forecast', group: 'Earth right now' },
+  { id: 'aircraft', label: 'Aircraft', group: 'Things moving' },
+  { id: 'satellites', label: 'ISS + Starlink', group: 'Things moving' },
+  { id: 'pulse', label: 'Births & deaths', group: 'Human activity' },
+  { id: 'wikiedits', label: 'Wikipedia edits, live', group: 'Human activity' },
+  { id: 'cables', label: 'Submarine cables', group: 'Internet' },
 ];
 
 const UNDER_CITIES = 'cities-0';
@@ -27,7 +28,8 @@ const ago = (ms) => {
 };
 
 const PULSE_COLORS = { birth: '#7ef0a0', death: '#b9a3ff', edit: '#ffffff' };
-const PULSE_LIFE_MS = 1800;
+const PULSE_LIFE_MS = config.layers.pulse.lifeMs;
+const T = config.layers; // per-layer timers
 
 export function createLiveLayers(map, { onStatus, getPulseData }) {
   const active = new Map(); // id -> stop()
@@ -111,7 +113,7 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
   };
   const addPulse = (lon, lat, k) => {
     ensurePulseLayer();
-    if (pulses.length > 400) return;
+    if (pulses.length > T.pulse.maxOnScreen) return;
     pulses.push({ lon, lat, k, t: performance.now() });
     if (!pulseRaf) pulseRaf = requestAnimationFrame(drawPulses);
   };
@@ -121,7 +123,7 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
       map.addSource('night', { type: 'geojson', data: nightPolygon() });
       map.addLayer({ id: 'night', type: 'fill', source: 'night', paint: { 'fill-color': '#000814', 'fill-opacity': 0.5 } }, UNDER_CITIES);
       onStatus('daynight', 'night side shaded');
-      const timer = setInterval(() => map.getSource('night')?.setData(nightPolygon()), 60000);
+      const timer = setInterval(() => map.getSource('night')?.setData(nightPolygon()), T.daynight.redrawMs);
       return () => {
         clearInterval(timer);
         remove(['night'], ['night']);
@@ -159,7 +161,7 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
         },
       });
       const unhover = hover('quakes', (p) => [`M${(+p.mag).toFixed(1)} earthquake`, p.place, `${ago(p.time)} · ${Math.round(p.depth)} km deep`]);
-      const stop = poll('earthquakes', '/api/live/earthquakes', 60000, (d) => {
+      const stop = poll('earthquakes', '/api/live/earthquakes', T.earthquakes.pollMs, (d) => {
         map.getSource('quakes')?.setData(fc(d.rows.map(([lon, lat, depth, mag, place, time]) => point(lon, lat, { depth, mag, place, time }))));
         const top = d.rows.reduce((m, r) => Math.max(m, r[3]), 0);
         onStatus('earthquakes', `${d.rows.length} of M2.5+, largest M${top.toFixed(1)}`);
@@ -180,7 +182,7 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
       });
       const names = { wildfires: 'Wildfire', volcanoes: 'Volcano', severeStorms: 'Severe storm' };
       const unhover = hover('events', (p) => [p.title, [names[p.cat] ?? p.cat, p.mag].filter(Boolean).join(' · '), `Updated ${ago(Date.parse(p.date))}`]);
-      const stop = poll('events', '/api/live/events', 15 * 60000, (d) => {
+      const stop = poll('events', '/api/live/events', T.events.pollMs, (d) => {
         map.getSource('events')?.setData(fc(d.rows.map(([lon, lat, cat, title, date, mag]) => point(lon, lat, { cat, title, date, mag }))));
         const n = (c) => d.rows.filter((r) => r[2] === c).length;
         onStatus('events', `${n('wildfires')} fires · ${n('severeStorms')} storms · ${n('volcanoes')} volcanoes`);
@@ -203,7 +205,7 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
           'circle-blur': 1,
         },
       }, UNDER_CITIES);
-      const stop = poll('aurora', '/api/live/aurora', 10 * 60000, (d) => {
+      const stop = poll('aurora', '/api/live/aurora', T.aurora.pollMs, (d) => {
         map.getSource('aurora')?.setData(fc(d.rows.map(([lon, lat, v]) => point(lon, lat, { v }))));
         const peak = d.rows.reduce((m, r) => Math.max(m, r[2]), 0);
         onStatus('aurora', d.rows.length ? `peak ${peak}% chance near the poles` : 'quiet right now');
@@ -245,7 +247,7 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
       // Between snapshots each aircraft is moved along its last known heading and speed.
       const draw = () => {
         if (!snapshot) return;
-        const dt = Math.min(20 * 60, Math.max(0, Date.now() / 1000 - snapshot.time));
+        const dt = Math.min(T.aircraft.maxProjectionSeconds, Math.max(0, Date.now() / 1000 - snapshot.time));
         map.getSource('aircraft')?.setData(fc(snapshot.rows.map(([lon, lat, h, v, call, alt]) => {
           const d = (v * dt) / 111320;
           const la = Math.max(-89, Math.min(89, lat + d * Math.cos((h * Math.PI) / 180)));
@@ -255,11 +257,11 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
         onStatus('aircraft', `${num.format(snapshot.rows.length)} airborne · positions from ${ago(snapshot.time * 1000)}, projected forward`);
       };
       const unhover = hover('aircraft', (p) => [p.call || 'Aircraft', `${num.format(Math.round(p.alt))} m · ${Math.round(p.v * 3.6)} km/h`]);
-      const stop = poll('aircraft', '/api/live/aircraft', 5 * 60000, (d) => {
+      const stop = poll('aircraft', '/api/live/aircraft', T.aircraft.pollMs, (d) => {
         snapshot = d;
         draw();
       });
-      const timer = setInterval(draw, 2000);
+      const timer = setInterval(draw, T.aircraft.redrawMs);
       return () => {
         stop();
         clearInterval(timer);
@@ -305,15 +307,15 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
       };
       const describe = (p) => [p.name, `${Math.round(p.alt)} km up · position computed from orbit data`];
       const unhover = [hover('iss', describe), hover('starlink', describe)];
-      const stop = poll('satellites', '/api/live/satellites', 30 * 60000, (d) => {
+      const stop = poll('satellites', '/api/live/satellites', T.satellites.pollMs, (d) => {
         iss = d.iss ? twoline2satrec(d.iss[1], d.iss[2]) : null;
         fleet = d.starlink.map(([name, l1, l2]) => ({ name, rec: twoline2satrec(l1, l2) }));
         drawIss();
         drawFleet();
         onStatus('satellites', [iss && 'ISS', fleet.length ? `${num.format(fleet.length)} Starlink` : 'Starlink data unavailable right now'].filter(Boolean).join(' · '));
       });
-      const t1 = setInterval(drawIss, 1000);
-      const t2 = setInterval(drawFleet, 5000);
+      const t1 = setInterval(drawIss, T.satellites.issRedrawMs);
+      const t2 = setInterval(drawFleet, T.satellites.starlinkRedrawMs);
       return () => {
         stop();
         clearInterval(t1);
@@ -344,7 +346,7 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
         }
         return lo;
       };
-      const TICK = 250;
+      const TICK = T.pulse.tickMs;
       const timer = setInterval(() => {
         const d = getPulseData();
         if (!d || !d.cities.length || document.hidden) return;
@@ -368,7 +370,7 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
       let seen = 0;
       const queue = new Set();
       try {
-        stream = new EventSource('https://stream.wikimedia.org/v2/stream/recentchange');
+        stream = new EventSource(T.wikiedits.streamUrl);
       } catch {
         onStatus('wikiedits', 'unavailable right now');
         return () => {};
@@ -377,16 +379,16 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
       stream.onmessage = (e) => {
         try {
           const ev = JSON.parse(e.data);
-          if (ev.wiki === 'enwiki' && ev.namespace === 0 && ev.type === 'edit' && !ev.bot) queue.add(ev.title);
+          if (ev.wiki === T.wikiedits.wiki && ev.namespace === 0 && ev.type === 'edit' && !ev.bot) queue.add(ev.title);
         } catch { /* ignore malformed events */ }
       };
       stream.onerror = () => onStatus('wikiedits', 'reconnecting…');
       const timer = setInterval(async () => {
-        const titles = [...queue].slice(0, 50);
+        const titles = [...queue].slice(0, T.wikiedits.batchSize);
         queue.clear();
         if (!titles.length) return;
         try {
-          const url = `https://en.wikipedia.org/w/api.php?action=query&prop=coordinates&colimit=50&format=json&origin=*&titles=${encodeURIComponent(titles.join('|'))}`;
+          const url = `${T.wikiedits.coordinatesApiUrl}?action=query&prop=coordinates&colimit=${T.wikiedits.batchSize}&format=json&origin=*&titles=${encodeURIComponent(titles.join('|'))}`;
           const pages = Object.values((await (await fetch(url)).json()).query?.pages ?? {});
           let last = null;
           for (const p of pages) {
@@ -398,7 +400,7 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
           }
           if (last) onStatus('wikiedits', `${num.format(seen)} place edits · latest: ${last}`);
         } catch { /* next batch will retry */ }
-      }, 4000);
+      }, T.wikiedits.batchMs);
       return () => {
         stream.close();
         clearInterval(timer);

@@ -4,10 +4,10 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import { API, getJSON } from './api.js';
 import { awakeFraction, localHour } from './astro.js';
 import CityPanel, { flag } from './CityPanel.jsx';
+import { config } from './config.js';
 import { createLiveLayers, LIVE_LAYERS } from './liveLayers.js';
 import { sizeClass, SIZE_CLASSES } from './models.js';
 
-const STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 
 const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
 const full = new Intl.NumberFormat('en');
@@ -44,11 +44,11 @@ const METRICS = {
   },
 };
 
-const TIER_MINZOOM = [0, 2.2, 3.8, 5.2];
+const TIER_MINZOOM = config.map.cityTierMinZoom;
 const tierOf = (pop) => (pop >= 1e6 ? 0 : pop >= 3e5 ? 1 : pop >= 1e5 ? 2 : 3);
 const LAYERS = TIER_MINZOOM.map((_, i) => `cities-${i}`);
 
-const RENT_SLIDER_MAX = 4500; // at the top of the slider, "max rent" means no limit
+const RENT_SLIDER_MAX = config.ui.rentSliderMax;
 const DEFAULT_FILTERS = { minPop: 4.3, rentMin: 0, rentMax: RENT_SLIDER_MAX, ofkMin: 0, classes: [0, 1, 2, 3], realRent: false };
 const SECONDS_PER_YEAR = 31_557_600;
 const WORLD_RATES = { birth: 17, death: 7.7 }; // per 1,000 a year, used when a country has no figure
@@ -121,10 +121,10 @@ export default function App() {
   const [pinnedId, setPinnedId] = useState(null);
   const [query, setQuery] = useState('');
   const [spin, setSpin] = useState(true);
-  const [view, setView] = useState({ zoom: 1.6, bounds: null });
+  const [view, setView] = useState({ zoom: config.map.startZoom, bounds: null });
   const [ready, setReady] = useState(null); // the map instance once its layers exist
   const [clock, setClock] = useState(0); // bumped whenever per-city values are recomputed in place
-  const [layers, setLayers] = useState(() => Object.fromEntries(LIVE_LAYERS.map((l) => [l.id, l.on])));
+  const [layers, setLayers] = useState(() => Object.fromEntries(LIVE_LAYERS.map((l) => [l.id, config.layers.onAtStart.includes(l.id)])));
   const [layerStatus, setLayerStatus] = useState({});
   const [history, setHistory] = useState(null); // Zillow rent by year
   const [yearIdx, setYearIdx] = useState(null); // null = latest
@@ -147,7 +147,7 @@ export default function App() {
   // Load cities from the backend.
   useEffect(() => {
     // Bump `v` whenever the response shape changes, so browser and CDN caches of the old shape are skipped.
-    getJSON('/api/cities?v=2')
+    getJSON(`/api/cities?v=${config.citiesApiVersion}`)
       .then(({ meta, rows, tz, countries }) => {
         const list = rows.map(([gid, name, cc, lat, lon, pop, rent, rentReal, ofk, tzi], id) => ({
           id, gid, name, cc, lat, lon, pop, rent, ofk, tz: tzi,
@@ -165,7 +165,7 @@ export default function App() {
       .catch((e) => setError(`Couldn't load city data from ${API} (${e.message}). Is the backend running?`));
   }, []);
 
-  // Poll the backend's status every 30 s. When it holds a newer city dataset than the one on
+  // Poll the backend's status (config.refresh.statusPollMs). When it holds a newer city dataset than the one on
   // screen (or its copy has passed its refresh interval), re-fetch and update cities in place.
   const dataRef = useRef(null);
   dataRef.current = data;
@@ -190,7 +190,7 @@ export default function App() {
       try {
         // `t` names the version being asked for, so the answer is cacheable but never stale.
         const t = expired ? `r${Math.floor(st.now / ds.refreshSeconds)}` : ds.fetchedAt;
-        const fresh = await getJSON(`/api/cities?v=2&t=${t}`);
+        const fresh = await getJSON(`/api/cities?v=${config.citiesApiVersion}&t=${t}`);
         if (fresh.meta.fetchedAt <= have) return;
         const byGid = new Map(fresh.rows.map((r) => [r[0], r]));
         for (const c of cities) {
@@ -218,14 +218,14 @@ export default function App() {
       }
     };
     check();
-    const timer = setInterval(check, 30000);
+    const timer = setInterval(check, config.refresh.statusPollMs);
     return () => clearInterval(timer);
   }, [cities]);
 
-  // Re-render once a second-ish so "x min ago" labels stay honest.
+  // Re-render periodically so "x min ago" labels stay honest.
   const [, setTick] = useState(0);
   useEffect(() => {
-    const timer = setInterval(() => setTick((n) => n + 1), 10000);
+    const timer = setInterval(() => setTick((n) => n + 1), config.refresh.labelsMs);
     return () => clearInterval(timer);
   }, []);
 
@@ -235,7 +235,7 @@ export default function App() {
     const timer = setInterval(() => {
       awakeExprRef.current = refreshAwake(data.cities, data.tzNames);
       setClock((n) => n + 1);
-    }, 60000);
+    }, config.refresh.awakeMs);
     return () => clearInterval(timer);
   }, [data]);
 
@@ -244,10 +244,10 @@ export default function App() {
     if (!cities) return;
     const map = new maplibregl.Map({
       container: container.current,
-      style: STYLE,
-      center: [15, 25],
-      zoom: 1.6,
-      maxPitch: 80,
+      style: config.mapStyle,
+      center: config.map.startCenter,
+      zoom: config.map.startZoom,
+      maxPitch: config.map.maxPitch,
       attributionControl: { compact: true },
     });
     mapRef.current = map;
@@ -319,15 +319,15 @@ export default function App() {
 
     map.on('move', () => {
       clearTimeout(viewTimer);
-      viewTimer = setTimeout(() => setView({ zoom: map.getZoom(), bounds: map.getBounds() }), 180);
+      viewTimer = setTimeout(() => setView({ zoom: map.getZoom(), bounds: map.getBounds() }), config.map.viewDebounceMs);
     });
 
     const tick = (now) => {
       const dt = (now - last) / 1000;
       last = now;
-      if (spinRef.current && !map.isMoving() && map.getZoom() < 4) {
+      if (spinRef.current && !map.isMoving() && map.getZoom() < config.map.spinMaxZoom) {
         const c = map.getCenter();
-        map.jumpTo({ center: [c.lng + dt * 5, c.lat] });
+        map.jumpTo({ center: [c.lng + dt * config.map.spinDegreesPerSecond, c.lat] });
       }
       raf = requestAnimationFrame(tick);
     };
@@ -382,7 +382,7 @@ export default function App() {
         }
         return next;
       });
-    }, 1100);
+    }, config.ui.timeLapseStepMs);
     return () => clearInterval(timer);
   }, [playing, history, lastYearIdx]);
 
@@ -415,7 +415,7 @@ export default function App() {
     setSpin(false);
     setSelectedId(c.id);
     setQuery('');
-    mapRef.current?.flyTo({ center: [c.lon, c.lat], zoom: Math.max(mapRef.current.getZoom(), 8.5), speed: 1.1 });
+    mapRef.current?.flyTo({ center: [c.lon, c.lat], zoom: Math.max(mapRef.current.getZoom(), config.map.flyToZoom), speed: config.map.flyToSpeed });
   };
 
   const matches = useMemo(() => {
@@ -424,7 +424,7 @@ export default function App() {
     const out = [];
     for (const c of cities) {
       if (c.name.toLowerCase().startsWith(q)) out.push(c);
-      if (out.length === 7) break;
+      if (out.length === config.ui.searchResults) break;
     }
     return out;
   }, [cities, query]);
@@ -439,7 +439,7 @@ export default function App() {
       c.ofk >= f.ofkMin && classes.has(c.cls) && (!f.realRent || c.rentReal);
   }, [effFilters]);
 
-  const whole = view.zoom < 3 || !view.bounds;
+  const whole = view.zoom < config.map.worldStatsMaxZoom || !view.bounds;
   const stats = useMemo(() => {
     if (!cities) return null;
     let pop = 0, of = 0, rentW = 0, awake = 0, rentAllReal = true;
@@ -454,7 +454,7 @@ export default function App() {
       rentW += c.rent * c.pop;
       visible.push(c);
     }
-    const top = [...visible].sort((a, b) => b[metric] - a[metric]).slice(0, 8);
+    const top = [...visible].sort((a, b) => b[metric] - a[metric]).slice(0, config.ui.topListSize);
     return { count: visible.length, pop, of, awake, rent: pop ? rentW / pop : 0, rentAllReal: visible.length > 0 && rentAllReal, top, visible };
     // `clock` is a dependency because rent and awake values are updated in place.
   }, [cities, passes, view, whole, metric, clock]);
@@ -630,7 +630,7 @@ export default function App() {
           </ul>
         ) : <p className="note">Checking the backend…</p>}
         <p className="note">
-          This page checks the backend every 30 s{syncedAt ? ` and last received city data ${duration((Date.now() - syncedAt) / 1000)} ago` : ''}.
+          This page checks the backend every {duration(config.refresh.statusPollMs / 1000)}{syncedAt ? ` and last received city data ${duration((Date.now() - syncedAt) / 1000)} ago` : ''}.
           Live layers only fetch while switched on.
         </p>
 

@@ -8,7 +8,19 @@ npm install
 npm run dev        # http://localhost:5199, expects the backend on http://localhost:8000
 ```
 
-Set `VITE_API_URL` to the backend's URL at build time (see `.env.example`).
+## Configuration
+
+Every setting lives in [`src/config.js`](src/config.js): the backend URL, how often the page polls
+for newer data, each live layer's poll and redraw timers, which layers start switched on, and the
+map and UI defaults. Edit that file to change them.
+
+Three values can also be set at build time without editing the file (see `.env.example`):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `VITE_API_URL` | `http://localhost:8000` | Backend base URL. |
+| `VITE_STATUS_POLL_SECONDS` | `30` | How often the page asks the backend whether newer data exists. |
+| `VITE_MAP_STYLE` | CARTO Dark Matter | MapLibre style URL for the basemap. |
 
 ## Features
 
@@ -26,6 +38,7 @@ Set `VITE_API_URL` to the backend's URL at build time (see `.env.example`).
 
 | File | What it holds |
 | --- | --- |
+| `src/config.js` | every refresh interval, URL and default |
 | `src/App.jsx` | globe, metrics, filters, stats |
 | `src/CityPanel.jsx` | city details, live profile, compare table |
 | `src/liveLayers.js` | every optional live layer |

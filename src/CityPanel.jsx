@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { getJSON } from './api.js';
+import { config } from './config.js';
 import { formatLocalTime } from './astro.js';
 import { SIZE_CLASSES } from './models.js';
 
@@ -49,8 +50,7 @@ function useRemote(key, path, refreshMs) {
   }, [key, path, refreshMs]);
   return key ? cache.get(key) : null; // undefined = loading, null = failed
 }
-const PROFILE_REFRESH_MS = 5 * 60 * 1000;
-const useProfile = (city) => useRemote(city && `profile:${city.gid}`, city && `/api/cities/${city.gid}/profile`, PROFILE_REFRESH_MS);
+const useProfile = (city) => useRemote(city && `profile:${city.gid}`, city && `/api/cities/${city.gid}/profile`, config.refresh.cityProfileMs);
 
 function Row({ label, badge, kind = 'est', children }) {
   if (children == null || children === false) return null;
@@ -174,11 +174,11 @@ export default function CityPanel({ city, pinned, onPin, onClose, countries, pee
               <h2>Creators & attention</h2>
               <dl>
                 <Row label={`GitHub profiles listing "${city.name}"`}>{profile.github && full.format(profile.github.count)}</Row>
-                <Row label="Geotagged Commons photos, 10 km">
+                <Row label={`Geotagged Commons photos${profile.commons?.radiusKm ? `, ${profile.commons.radiusKm} km` : ''}`}>
                   {profile.commons && `${full.format(profile.commons.count)}${profile.commons.capped ? '+' : ''}`}
                 </Row>
-                <Row label="YouTube videos nearby, 7 days">{profile.youtube?.videos7d != null && `~${compact.format(profile.youtube.videos7d)}`}</Row>
-                <Row label="Flickr photos nearby, 30 days">{profile.flickr && full.format(profile.flickr.photos30d)}</Row>
+                <Row label={`YouTube videos nearby, ${profile.youtube?.days} days`}>{profile.youtube?.videos != null && `~${compact.format(profile.youtube.videos)}`}</Row>
+                <Row label={`Flickr photos nearby, ${profile.flickr?.days} days`}>{profile.flickr && full.format(profile.flickr.photos)}</Row>
                 <Row label="Wikipedia views, 30 days">{wd?.pageviews30d != null && full.format(wd.pageviews30d)}</Row>
                 <Row label="Notable people born here">{wd?.bornHere != null && full.format(wd.bornHere)}</Row>
               </dl>
