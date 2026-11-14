@@ -129,6 +129,8 @@ export default function App() {
   const [history, setHistory] = useState(null); // Zillow rent by year
   const [yearIdx, setYearIdx] = useState(null); // null = latest
   const [playing, setPlaying] = useState(false);
+  const [airlines, setAirlines] = useState(null); // airlines in the current aircraft snapshot
+  const [airline, setAirline] = useState(''); // airline the aircraft layer is narrowed to
   const [status, setStatus] = useState(null); // backend /api/status, polled
   const [syncedAt, setSyncedAt] = useState(null); // when this page last received city data
 
@@ -313,6 +315,7 @@ export default function App() {
       liveRef.current = createLiveLayers(map, {
         onStatus: (id, text) => setLayerStatus((s) => (s[id] === text ? s : { ...s, [id]: text })),
         getPulseData: () => pulseRef.current,
+        onAirlines: setAirlines,
       });
       setReady(map);
     });
@@ -412,6 +415,10 @@ export default function App() {
     if (!liveRef.current || !ready) return;
     for (const l of LIVE_LAYERS) liveRef.current.set(l.id, layers[l.id]);
   }, [layers, ready]);
+
+  useEffect(() => {
+    if (liveRef.current && ready) liveRef.current.setAirline(airline);
+  }, [airline, ready, layers.aircraft]);
 
   const selected = selectedId != null && cities ? cities[selectedId] : null;
   const pinned = pinnedId != null && cities ? cities[pinnedId] : null;
@@ -585,6 +592,19 @@ export default function App() {
                 </span>
               </label>
             ))}
+            {g === 'Things moving' && layers.aircraft && airlines && (
+              <div className="airline-pick">
+                <select value={airline} onChange={(e) => setAirline(e.target.value)} aria-label="Show one airline">
+                  <option value="">All airlines ({full.format(airlines.total)} aircraft)</option>
+                  {airlines.list.map(([name, n]) => <option key={name} value={name}>{name} ({n})</option>)}
+                </select>
+                <small>
+                  {airline
+                    ? `Showing ${airlines.list.find(([n]) => n === airline)?.[1] ?? 0} ${airline} aircraft in yellow.`
+                    : `${airlines.list.length} airlines identified from callsigns; hover an aircraft for its flight.`}
+                </small>
+              </div>
+            )}
           </div>
         ))}
 

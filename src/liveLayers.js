@@ -27,11 +27,13 @@ const ago = (ms) => {
   return m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
 };
 
+const AIRLINE_HIGHLIGHT = '#ffd84d';
 const PULSE_COLORS = { birth: '#7ef0a0', death: '#b9a3ff', edit: '#ffffff' };
 const PULSE_LIFE_MS = config.layers.pulse.lifeMs;
 const T = config.layers; // per-layer timers
 
-export function createLiveLayers(map, { onStatus, getPulseData }) {
+export function createLiveLayers(map, { onStatus, getPulseData, onAirlines }) {
+  let airlineFilter = null; // airline name the aircraft layer is narrowed to, or null for all
   const active = new Map(); // id -> stop()
   const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 10 });
 
@@ -220,7 +222,7 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
       if (!map.hasImage('plane')) {
         const size = 32;
         const ctx = Object.assign(document.createElement('canvas'), { width: size, height: size }).getContext('2d');
-        ctx.fillStyle = '#eaf6ff';
+        ctx.fillStyle = '#ffffff';
         ctx.beginPath();
         ctx.moveTo(16, 3);
         ctx.lineTo(25, 28);
@@ -228,7 +230,8 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
         ctx.lineTo(7, 28);
         ctx.closePath();
         ctx.fill();
-        map.addImage('plane', ctx.getImageData(0, 0, size, size));
+        // SDF lets the icon be tinted, so a selected airline can be highlighted.
+        map.addImage('plane', ctx.getImageData(0, 0, size, size), { sdf: true });
       }
       map.addSource('aircraft', { type: 'geojson', data: fc([]) });
       map.addLayer({
@@ -241,31 +244,41 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
           'icon-allow-overlap': true,
           'icon-ignore-placement': true,
         },
-        paint: { 'icon-opacity': 0.85 },
+        paint: { 'icon-opacity': 0.9, 'icon-color': airlineFilter ? AIRLINE_HIGHLIGHT : '#eaf6ff' },
+        filter: airlineFilter ? ['==', ['get', 'airline'], airlineFilter] : true,
       });
       let snapshot = null;
       // Between snapshots each aircraft is moved along its last known heading and speed.
       const draw = () => {
         if (!snapshot) return;
         const dt = Math.min(T.aircraft.maxProjectionSeconds, Math.max(0, Date.now() / 1000 - snapshot.time));
-        map.getSource('aircraft')?.setData(fc(snapshot.rows.map(([lon, lat, h, v, call, alt]) => {
+        map.getSource('aircraft')?.setData(fc(snapshot.rows.map(([lon, lat, h, v, call, alt, type, reg, airline]) => {
           const d = (v * dt) / 111320;
           const la = Math.max(-89, Math.min(89, lat + d * Math.cos((h * Math.PI) / 180)));
           const lo = lon + (d * Math.sin((h * Math.PI) / 180)) / Math.max(0.05, Math.cos((lat * Math.PI) / 180));
-          return point(lo, la, { h, v, call, alt });
+          return point(lo, la, { h, v, call, alt, type: type ?? '', reg: reg ?? '', airline: airline ?? '' });
         })));
         onStatus('aircraft', `${num.format(snapshot.rows.length)} airborne · ${snapshot.source} · positions from ${ago(snapshot.time * 1000)}, projected forward`);
       };
-      const unhover = hover('aircraft', (p) => [p.call || 'Aircraft', `${num.format(Math.round(p.alt))} m · ${Math.round(p.v * 3.6)} km/h`]);
+      const unhover = hover('aircraft', (p) => [
+        [p.call || p.reg || 'Aircraft', p.airline].filter(Boolean).join(' · '),
+        [p.type, p.call && p.reg].filter(Boolean).join(' · '),
+        `${num.format(Math.round(p.alt))} m · ${Math.round(p.v * 3.6)} km/h`,
+      ]);
       const stop = poll('aircraft', '/api/live/aircraft', T.aircraft.pollMs, (d) => {
         snapshot = d;
         draw();
+        // Airlines in this snapshot, busiest first, for the filter menu.
+        const counts = new Map();
+        for (const row of d.rows) if (row[8]) counts.set(row[8], (counts.get(row[8]) ?? 0) + 1);
+        onAirlines?.({ total: d.rows.length, named: [...counts.values()].reduce((a, b) => a + b, 0), list: [...counts].sort((a, b) => b[1] - a[1]) });
       });
       const timer = setInterval(draw, T.aircraft.redrawMs);
       return () => {
         stop();
         clearInterval(timer);
         unhover();
+        onAirlines?.(null);
         remove(['aircraft'], ['aircraft']);
       };
     },
@@ -409,6 +422,13 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
   };
 
   return {
+    /** Narrow the aircraft layer to one airline (by name), or pass null to show all. */
+    setAirline(name) {
+      airlineFilter = name || null;
+      if (!map.getLayer('aircraft')) return;
+      map.setFilter('aircraft', airlineFilter ? ['==', ['get', 'airline'], airlineFilter] : null);
+      map.setPaintProperty('aircraft', 'icon-color', airlineFilter ? AIRLINE_HIGHLIGHT : '#eaf6ff');
+    },
     set(id, on) {
       if (on && !active.has(id)) active.set(id, starters[id]());
       else if (!on && active.has(id)) {

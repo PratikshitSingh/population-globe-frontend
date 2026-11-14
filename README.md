@@ -31,6 +31,7 @@ Three values can also be set at build time without editing the file (see `.env.e
   ISS + Starlink, births & deaths pulse, live Wikipedia edits, submarine cables.
 - **City panel:** live weather and air quality, Wikidata population, GitHub developers, geotagged photos,
   Wikipedia views, notable people born there, country stats, and nearby bars/cafés/gyms on request.
+- **Airlines:** hover an aircraft for its flight, airline, type and registration; pick an airline to show only its aircraft.
 - **Compare:** pin a city, pick another, see them side by side.
 - **Rent time-lapse:** play US rent from 2015 to today.
 

@@ -172,3 +172,10 @@ dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; white-spac
 .fresh li:first-child { border-top: 0; }
 .fresh em { text-align: right; color: var(--text); }
 .fresh small { display: block; color: var(--muted); font-size: 10.5px; }
+
+.airline-pick { margin: 6px 0 4px 24px; }
+.airline-pick select {
+  width: 100%; padding: 6px 8px; border-radius: 8px; font-size: 12px;
+  background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); color: var(--text);
+}
+.airline-pick small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.35; }
