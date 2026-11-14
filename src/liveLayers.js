@@ -254,7 +254,7 @@ export function createLiveLayers(map, { onStatus, getPulseData }) {
           const lo = lon + (d * Math.sin((h * Math.PI) / 180)) / Math.max(0.05, Math.cos((lat * Math.PI) / 180));
           return point(lo, la, { h, v, call, alt });
         })));
-        onStatus('aircraft', `${num.format(snapshot.rows.length)} airborne · positions from ${ago(snapshot.time * 1000)}, projected forward`);
+        onStatus('aircraft', `${num.format(snapshot.rows.length)} airborne · ${snapshot.source} · positions from ${ago(snapshot.time * 1000)}, projected forward`);
       };
       const unhover = hover('aircraft', (p) => [p.call || 'Aircraft', `${num.format(Math.round(p.alt))} m · ${Math.round(p.v * 3.6)} km/h`]);
       const stop = poll('aircraft', '/api/live/aircraft', T.aircraft.pollMs, (d) => {
