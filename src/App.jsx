@@ -173,6 +173,7 @@ export default function App() {
   useEffect(() => {
     if (!cities) return;
     let busy = false;
+    let lastAsked = null; // version tag of the last re-fetch, so one version is downloaded once
     const check = async () => {
       let st;
       try {
@@ -186,10 +187,14 @@ export default function App() {
       const expired = ds.ageSeconds == null || ds.ageSeconds >= ds.refreshSeconds;
       const newer = ds.fetchedAt != null && ds.fetchedAt > have + 5;
       if (busy || (!expired && !newer)) return;
+      // `t` names the version being asked for, so the answer is cacheable but never stale.
+      // On serverless hosts each server copy has its own cache, so status can say "expired"
+      // repeatedly; asking for each version only once keeps that from re-downloading the data.
+      const t = expired ? `r${Math.floor(st.now / ds.refreshSeconds)}` : ds.fetchedAt;
+      if (t === lastAsked) return;
+      lastAsked = t;
       busy = true;
       try {
-        // `t` names the version being asked for, so the answer is cacheable but never stale.
-        const t = expired ? `r${Math.floor(st.now / ds.refreshSeconds)}` : ds.fetchedAt;
         const fresh = await getJSON(`/api/cities?v=${config.citiesApiVersion}&t=${t}`);
         if (fresh.meta.fetchedAt <= have) return;
         const byGid = new Map(fresh.rows.map((r) => [r[0], r]));
@@ -616,12 +621,15 @@ export default function App() {
         {status ? (
           <ul className="fresh">
             {status.sources.map((s) => {
-              const age = s.ageSeconds == null ? null : s.ageSeconds + (Date.now() - status.receivedAt) / 1000;
+              // For city data, report the age of the copy this page is actually showing.
+              const age = s.id === 'dataset' && meta
+                ? Date.now() / 1000 - meta.fetchedAt
+                : s.ageSeconds == null ? null : s.ageSeconds + (Date.now() - status.receivedAt) / 1000;
               return (
                 <li key={s.id}>
                   <span>{s.label}<small>{s.upstream}</small></span>
                   <em>
-                    {age == null ? 'not requested yet' : `pulled ${duration(age)} ago`}
+                    {age == null ? 'idle on this server' : `pulled ${duration(age)} ago`}
                     <small>every {duration(s.refreshSeconds)}</small>
                   </em>
                 </li>
