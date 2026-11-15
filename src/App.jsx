@@ -49,7 +49,35 @@ const tierOf = (pop) => (pop >= 1e6 ? 0 : pop >= 3e5 ? 1 : pop >= 1e5 ? 2 : 3);
 const LAYERS = TIER_MINZOOM.map((_, i) => `cities-${i}`);
 
 const RENT_SLIDER_MAX = config.ui.rentSliderMax;
-const DEFAULT_FILTERS = { minPop: 4.3, rentMin: 0, rentMax: RENT_SLIDER_MAX, ofkMin: 0, classes: [0, 1, 2, 3], realRent: false };
+const RENT_STEP = config.ui.rentSliderStep;
+// Population slider positions. The last stop means "no upper limit".
+const POP_STOPS = config.ui.popStops;
+const POP_TOP = POP_STOPS.length;
+const popLo = (i) => POP_STOPS[i];
+const popHi = (i) => (i >= POP_TOP ? Infinity : POP_STOPS[i]);
+const DEFAULT_FILTERS = { popMin: 0, popMax: POP_TOP, rentMin: 0, rentMax: RENT_SLIDER_MAX, realRent: false };
+// Size presets expressed as slider positions: [from, to).
+const stopAt = (pop) => POP_STOPS.indexOf(pop);
+const SIZE_PRESETS = [
+  [stopAt(5e6), POP_TOP], [stopAt(1e6), stopAt(5e6)], [stopAt(2.5e5), stopAt(1e6)], [0, stopAt(2.5e5)],
+];
+
+// One track with two handles. `value` is [low, high]; the handles keep at least `gap` apart.
+function RangeSlider({ min, max, step = 1, gap = step, value: [lo, hi], onChange, label }) {
+  const pct = (v) => `${((v - min) / (max - min)) * 100}%`;
+  return (
+    <div className="range" style={{ '--lo': pct(lo), '--hi': pct(hi) }}>
+      <input
+        type="range" min={min} max={max} step={step} value={lo} aria-label={`${label}, minimum`}
+        onChange={(e) => onChange([Math.min(+e.target.value, hi - gap), hi])}
+      />
+      <input
+        type="range" min={min} max={max} step={step} value={hi} aria-label={`${label}, maximum`}
+        onChange={(e) => onChange([lo, Math.max(+e.target.value, lo + gap)])}
+      />
+    </div>
+  );
+}
 const SECONDS_PER_YEAR = 31_557_600;
 const WORLD_RATES = { birth: 17, death: 7.7 }; // per 1,000 a year, used when a country has no figure
 
@@ -82,11 +110,10 @@ function filterExpr(tier, f) {
   return [
     'all',
     ['==', ['get', 'tier'], tier],
-    ['>=', ['get', 'pop'], Math.pow(10, f.minPop)],
+    ['>=', ['get', 'pop'], popLo(f.popMin)],
+    ['<', ['get', 'pop'], popHi(f.popMax)],
     ['>=', ['get', 'rent'], f.rentMin],
     ['<=', ['get', 'rent'], f.rentMax >= RENT_SLIDER_MAX ? Infinity : f.rentMax],
-    ['>=', ['get', 'ofk'], f.ofkMin],
-    ['in', ['get', 'cls'], ['literal', f.classes]],
     ['>=', ['get', 'rr'], f.realRent ? 1 : 0],
   ];
 }
@@ -443,12 +470,12 @@ export default function App() {
 
   const passes = useMemo(() => {
     const f = effFilters;
-    const minPop = Math.pow(10, f.minPop);
+    const lo = popLo(f.popMin);
+    const hi = popHi(f.popMax);
     const rentMax = f.rentMax >= RENT_SLIDER_MAX ? Infinity : f.rentMax;
-    const classes = new Set(f.classes);
     return (c) =>
-      c.pop >= minPop && c.rent >= f.rentMin && c.rent <= rentMax &&
-      c.ofk >= f.ofkMin && classes.has(c.cls) && (!f.realRent || c.rentReal);
+      c.pop >= lo && c.pop < hi && c.rent >= f.rentMin && c.rent <= rentMax &&
+      (!f.realRent || c.rentReal);
   }, [effFilters]);
 
   const whole = view.zoom < config.map.worldStatsMaxZoom || !view.bounds;
@@ -494,8 +521,16 @@ export default function App() {
   }, [selected, cities, clock]);
 
   const setF = (patch) => setFilters((f) => ({ ...f, ...patch }));
-  const toggleClass = (i) =>
-    setF({ classes: filters.classes.includes(i) ? filters.classes.filter((x) => x !== i) : [...filters.classes, i] });
+  const matchCount = useMemo(() => (cities ? cities.reduce((n, c) => n + (passes(c) ? 1 : 0), 0) : 0), [cities, passes]);
+  const popAny = filters.popMin === 0 && filters.popMax === POP_TOP;
+  const rentAny = filters.rentMin === 0 && filters.rentMax >= RENT_SLIDER_MAX;
+  const filtered = !popAny || !rentAny || filters.realRent;
+  const popLabel = popAny ? 'any'
+    : filters.popMax === POP_TOP ? `${compact.format(popLo(filters.popMin))}+`
+    : `${compact.format(popLo(filters.popMin))} – ${compact.format(popHi(filters.popMax))}`;
+  const rentLabel = rentAny ? 'any'
+    : filters.rentMax >= RENT_SLIDER_MAX ? `${usd(filters.rentMin)}+`
+    : `${usd(filters.rentMin)} – ${usd(filters.rentMax)}`;
   const m = METRICS[metric];
   const gradient = `linear-gradient(90deg, ${m.colors.join(', ')})`;
   const meta = data?.meta;
@@ -608,33 +643,41 @@ export default function App() {
           </div>
         ))}
 
-        <h2>Filters <button className="link" onClick={() => setFilters(DEFAULT_FILTERS)}>reset</button></h2>
-        <label className="slider">
-          <span>Min population <b>{compact.format(Math.pow(10, filters.minPop))}</b></span>
-          <input type="range" min="4.3" max="7" step="0.05" value={filters.minPop} onChange={(e) => setF({ minPop: +e.target.value })} />
-        </label>
-        <label className="slider">
-          <span>Min rent <b>{usd(filters.rentMin)}</b></span>
-          <input type="range" min="0" max={RENT_SLIDER_MAX} step="50" value={filters.rentMin} onChange={(e) => setF({ rentMin: Math.min(+e.target.value, filters.rentMax) })} />
-        </label>
-        <label className="slider">
-          <span>Max rent <b>{filters.rentMax >= RENT_SLIDER_MAX ? 'any' : usd(filters.rentMax)}</b></span>
-          <input type="range" min="0" max={RENT_SLIDER_MAX} step="50" value={filters.rentMax} onChange={(e) => setF({ rentMax: Math.max(+e.target.value, filters.rentMin) })} />
-        </label>
-        <label className="slider">
-          <span>Min OnlyFans users / 1k <b>{filters.ofkMin}</b></span>
-          <input type="range" min="0" max="130" step="1" value={filters.ofkMin} onChange={(e) => setF({ ofkMin: +e.target.value })} />
-        </label>
-        <div className="chips">
-          {SIZE_CLASSES.map((s, i) => (
-            <button key={s.label} className={filters.classes.includes(i) ? 'on' : ''} aria-pressed={filters.classes.includes(i)} onClick={() => toggleClass(i)}>
-              {s.label} <em>{s.hint}</em>
-            </button>
-          ))}
+        <h2>Filters {filtered && <button className="link" onClick={() => setFilters(DEFAULT_FILTERS)}>reset</button>}</h2>
+        {cities && (
+          <p className="match"><b>{full.format(matchCount)}</b> of {full.format(cities.length)} cities match</p>
+        )}
+        <div className="slider">
+          <span>Population <b>{popLabel}</b></span>
+          <RangeSlider
+            label="Population" min={0} max={POP_TOP} value={[filters.popMin, filters.popMax]}
+            onChange={([popMin, popMax]) => setF({ popMin, popMax })}
+          />
+        </div>
+        <div className="presets">
+          {SIZE_CLASSES.map((s, i) => {
+            const [from, to] = SIZE_PRESETS[i];
+            const on = filters.popMin === from && filters.popMax === to;
+            return (
+              <button
+                key={s.label} className={on ? 'on' : ''} aria-pressed={on} title={s.hint}
+                onClick={() => setF(on ? { popMin: 0, popMax: POP_TOP } : { popMin: from, popMax: to })}
+              >
+                {s.label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="slider">
+          <span>Rent per month <b>{rentLabel}</b></span>
+          <RangeSlider
+            label="Rent" min={0} max={RENT_SLIDER_MAX} step={RENT_STEP} value={[filters.rentMin, filters.rentMax]}
+            onChange={([rentMin, rentMax]) => setF({ rentMin, rentMax })}
+          />
         </div>
         <label className="check">
           <input type="checkbox" checked={effFilters.realRent} disabled={timeLapse} onChange={(e) => setF({ realRent: e.target.checked })} />
-          Only cities with measured rent
+          Measured rent only
         </label>
 
         <h2>Data freshness</h2>

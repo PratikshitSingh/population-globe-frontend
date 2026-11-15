@@ -26,7 +26,7 @@ Three values can also be set at build time without editing the file (see `.env.e
 
 - **Globe:** spin, tilt, zoom to street level; city search.
 - **Metrics:** population, OnlyFans users (estimate), OnlyFans per 1,000 (estimate), rent, people awake right now (estimate).
-- **Filters:** population, rent range, OnlyFans per 1k, city size, measured-rent-only.
+- **Filters:** population range with size presets, rent range, measured-rent-only; live count of matching cities.
 - **Live layers:** day/night line, earthquakes, wildfires/storms/volcanoes, aurora forecast, aircraft,
   ISS + Starlink, births & deaths pulse, live Wikipedia edits, submarine cables.
 - **City panel:** live weather and air quality, Wikidata population, GitHub developers, geotagged photos,

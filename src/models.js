@@ -1,4 +1,4 @@
-// City size classes used by the "area type" filter. All data and estimates come from the backend.
+// City size classes used by the size presets and the city panel. All data and estimates come from the backend.
 export const SIZE_CLASSES = [
   { label: 'Megacity', hint: '5M+' },
   { label: 'Large', hint: '1–5M' },

@@ -74,6 +74,10 @@ export const config = {
     searchResults: 7,
     topListSize: 8,
     rentSliderMax: 4500,     // at the top of the slider, "max rent" means no limit
+    rentSliderStep: 50,
+    // Positions on the population filter; one more position past the last means no upper limit.
+    // Must include 250K, 1M and 5M, the edges of the size presets.
+    popStops: [2e4, 5e4, 1e5, 2.5e5, 5e5, 1e6, 2e6, 5e6, 1e7],
     timeLapseStepMs: 1100,   // time each year stays on screen during rent playback
   },
 };
