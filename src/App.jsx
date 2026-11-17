@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 import { API, getJSON } from './api.js';
 import { awakeFraction, localHour } from './astro.js';
 import CityPanel, { flag } from './CityPanel.jsx';
@@ -756,6 +757,7 @@ export default function App() {
           </section>
         )}
       </aside>
+      <SpeedInsights />
     </div>
   );
 }
